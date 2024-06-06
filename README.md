@@ -1,131 +1,140 @@
-# Coworking Space Service Extension
-The Coworking Space Service is a set of APIs that enables users to request one-time tokens and administrators to authorize access to a coworking space. This service follows a microservice pattern and the APIs are split into distinct services that can be deployed and managed independently of one another.
 
-For this project, you are a DevOps engineer who will be collaborating with a team that is building an API for business analysts. The API provides business analysts basic analytics data on user activity in the service. The application they provide you functions as expected locally and you are expected to help build a pipeline to deploy it in Kubernetes.
+# Coworking Analytics Deployment Documentation
+## Overview
+This documentation provides guidance on deploying changes to the Udacity "Coworking Analytics" project. It aims to help experienced software developers understand the technologies and tools involved in the build and deployment process, as well as provide insight into how to release new builds.
 
-## Getting Started
+## Tech Stack
 
-### Dependencies
-#### Local Environment
-1. Python Environment - run Python 3.6+ applications and install Python dependencies via `pip`
-2. Docker CLI - build and run Docker images locally
-3. `kubectl` - run commands against a Kubernetes cluster
-4. `helm` - apply Helm Charts to a Kubernetes cluster
+The Coworking Analytics project is built using modern technologies and tools commonly used in web development. Here's an overview of the key components:
 
-#### Remote Resources
-1. AWS CodeBuild - build Docker images remotely
-2. AWS ECR - host Docker images
-3. Kubernetes Environment with AWS EKS - run applications in k8s
-4. AWS CloudWatch - monitor activity and logs in EKS
-5. GitHub - pull and clone code
+**Server:** Python
 
-### Setup
-#### 1. Configure a Database
-Set up a Postgres database using a Helm Chart.
+**Database:** Postgres
 
-1. Set up Bitnami Repo
+**Cloud:** AWS Cloudwatch, EKS, IAM, CodeBuild, ECR
+
+**Containerization:** Docker
+
+
+## Setup
+
+Set up locally
 ```bash
-helm repo add <REPO_NAME> https://charts.bitnami.com/bitnami
-```
+export DB_USERNAME=myuser
+export DB_PASSWORD=${POSTGRES_PASSWORD}
+export DB_HOST=127.0.0.1
+export DB_PORT=5433
+export DB_NAME=mydatabase
 
-2. Install PostgreSQL Helm Chart
-```
-helm install <SERVICE_NAME> <REPO_NAME>/postgresql
-```
 
-This should set up a Postgre deployment at `<SERVICE_NAME>-postgresql.default.svc.cluster.local` in your Kubernetes cluster. You can verify it by running `kubectl svc`
+python app.py
 
-By default, it will create a username `postgres`. The password can be retrieved with the following command:
-```bash
+
+# Set up port forwarding
+kubectl port-forward --namespace default svc/<SERVICE_NAME>-postgresql 5433:5432 &
+# Export the password. Replace 
 export POSTGRES_PASSWORD=$(kubectl get secret --namespace default <SERVICE_NAME>-postgresql -o jsonpath="{.data.postgres-password}" | base64 -d)
 
-echo $POSTGRES_PASSWORD
+
+# You may run these commands in another terminal window:
+curl <BASE_URL>/api/reports/daily_usage
+curl <BASE_URL>/api/reports/user_visits
+
 ```
 
-<sup><sub>* The instructions are adapted from [Bitnami's PostgreSQL Helm Chart](https://artifacthub.io/packages/helm/bitnami/postgresql).</sub></sup>
-
-3. Test Database Connection
-The database is accessible within the cluster. This means that when you will have some issues connecting to it via your local environment. You can either connect to a pod that has access to the cluster _or_ connect remotely via [`Port Forwarding`](https://kubernetes.io/docs/tasks/access-application-cluster/port-forward-access-application-cluster/)
-
-* Connecting Via Port Forwarding
+Update kubeconfig ~/.kube/config to connect to cluster
 ```bash
-kubectl port-forward --namespace default svc/<SERVICE_NAME>-postgresql 5432:5432 &
-    PGPASSWORD="$POSTGRES_PASSWORD" psql --host 127.0.0.1 -U postgres -d postgres -p 5432
+aws configure --profile=<PROFILE-NAME>
+
+export AWS_PROFILE=<PROFILE-NAME>
+
+aws sts get-caller-identity
+
+aws eks --region us-east-1 update-kubeconfig --name my-cluster
+
+# Find the service name of postgresql by listing your services
+kubectl get svc
+
+# Set up port-forwarding for the postgresql service
+kubectl port-forward svc/postgresql-service 5433:5432 &
+
+
+```
+    
+Verify and copy the context name
+
+```
+kubectl config current-context
+
 ```
 
-* Connecting Via a Pod
-```bash
-kubectl exec -it <POD_NAME> bash
-PGPASSWORD="<PASSWORD HERE>" psql postgres://postgres@<SERVICE_NAME>:5432/postgres -c <COMMAND_HERE>
+Output should be similar to: 
+
 ```
+arn:aws:eks:us-west-2:411764878390902:cluster/my-cluster
 
-4. Run Seed Files
-We will need to run the seed files in `db/` in order to create the tables and populate them with data.
-
-```bash
-kubectl port-forward --namespace default svc/<SERVICE_NAME>-postgresql 5432:5432 &
-    PGPASSWORD="$POSTGRES_PASSWORD" psql --host 127.0.0.1 -U postgres -d postgres -p 5432 < <FILE_NAME.sql>
 ```
+## Deployment Process
 
-### 2. Running the Analytics Application Locally
-In the `analytics/` directory:
+### Local Development Environment
 
-1. Install dependencies
-```bash
+**1. Setup Development Environment:** Clone the project repository and ensure that Docker and other necessary development tools are installed on your local machine.
+
+**2. Run Docker Containers:** Use Docker CLI to run containers for the backend, database locally (or can connect to ).
+
+**3. Access the Application:** Once the containers are up and running, access the application through a web browser or API client using the specified port: `5153`.
+
+``` 
+# Update the local package index with the latest packages from the repositories
+apt update
+
+# Install a couple of packages to successfully install postgresql server locally
+apt install build-essential libpq-dev
+
+# Update python modules to successfully build the required modules
+pip install --upgrade pip setuptools wheel
+
 pip install -r requirements.txt
+
 ```
-2. Run the application (see below regarding environment variables)
+
+### Deployment CI/CD
+**1. Version Control:** Ensure that all changes to the project are committed and pushed to the version control Github.
+
+**2. CI Pipeline:** The CI pipeline is triggered whenever changes are pushed to the repository. It performs tasks such as building Docker images,and generating artifacts and pushing image artifact to ECR.
+
+**3. Artifact Repository:** Artifacts generated during the CI process, such as Docker images, are stored in a repository ECR at `741692117543.dkr.ecr.us-east-1.amazonaws.com/coworking`.
+
+
+**4. CD Pipeline:** The CD pipeline deploys changes to the target environment by running when we see a new image artiffact pushed to ECR.
+
 ```bash
-<ENV_VARS> python app.py
+  kubetctl set image deployments/coworking coworking=741692117543.dkr.ecr.us-east-1.amazonaws.com/coworking:<IMAGE-TAG>
 ```
 
-There are multiple ways to set environment variables in a command. They can be set per session by running `export KEY=VAL` in the command line or they can be prepended into your command.
 
-* `DB_USERNAME`
-* `DB_PASSWORD`
-* `DB_HOST` (defaults to `127.0.0.1`)
-* `DB_PORT` (defaults to `5432`)
-* `DB_NAME` (defaults to `postgres`)
+## Lessons Learned
 
-If we set the environment variables by prepending them, it would look like the following:
-```bash
-DB_USERNAME=username_here DB_PASSWORD=password_here python app.py
+### Memory and CPU allocation:
+Pods CPU and Memory shoule have resource requests & limits to prevent over-consumption and to optimize reouces.
+
+Here is an example:
 ```
-The benefit here is that it's explicitly set. However, note that the `DB_PASSWORD` value is now recorded in the session's history in plaintext. There are several ways to work around this including setting environment variables in a file and sourcing them in a terminal session.
+...
+resources:
+    limits:
+        memory: 200Mi
+        cpu: 250m
+    requests:
+        memory: 150Mi
+        cpu: 200m    
+...
+```
 
-3. Verifying The Application
-* Generate report for check-ins grouped by dates
-`curl <BASE_URL>/api/reports/daily_usage`
+### EC2 Instance Type used:
 
-* Generate report for check-ins grouped by users
-`curl <BASE_URL>/api/reports/user_visits`
+For EKS Nodes, a `t3.medium` can be used for controlplane node. `t2.medium` for workernode. In case of scale up, multiple `t2.medium` nodes can join the cluster & node group.
 
-## Project Instructions
-1. Set up a Postgres database with a Helm Chart
-2. Create a `Dockerfile` for the Python application. Use a base image that is Python-based.
-3. Write a simple build pipeline with AWS CodeBuild to build and push a Docker image into AWS ECR
-4. Create a service and deployment using Kubernetes configuration files to deploy the application
-5. Check AWS CloudWatch for application logs
+### Cost savings:
 
-### Deliverables
-<!-- 1. `Dockerfile`
-2. Screenshot of AWS CodeBuild pipeline
-3. Screenshot of AWS ECR repository for the application's repository
-4. Screenshot of `kubectl get svc`
-5. Screenshot of `kubectl get pods`
-6. Screenshot of `kubectl describe svc <DATABASE_SERVICE_NAME>`
-7. Screenshot of `kubectl describe deployment <SERVICE_NAME>`
-8. All Kubernetes config files used for deployment (ie YAML files)
-9. Screenshot of AWS CloudWatch logs for the application
-10. `README.md` file in your solution that serves as documentation for your user to detail how your deployment process works and how the user can deploy changes. The details should not simply rehash what you have done on a step by step basis. Instead, it should help an experienced software developer understand the technologies and tools in the build and deploy process as well as provide them insight into how they would release new builds. -->
-
-
-### Stand Out Suggestions
-Please provide up to 3 sentences for each suggestion. Additional content in your submission from the standout suggestions do _not_ impact the length of your total submission.
-1. Specify reasonable Memory and CPU allocation in the Kubernetes deployment configuration
-2. In your README, specify what AWS instance type would be best used for the application? Why?
-3. In your README, provide your thoughts on how we can save on costs?
-
-### Best Practices
-* Dockerfile uses an appropriate base image for the application being deployed. Complex commands in the Dockerfile include a comment describing what it is doing.
-* The Docker images use semantic versioning with three numbers separated by dots, e.g. `1.2.1` and  versioning is visible in the  screenshot. See [Semantic Versioning](https://semver.org/) for more details.# microservices-aws-kubernetes
+We can set up logging & monitoring to prevent over consumption of resources. Also we can set up cluster using internal internet traffic to reduce price & not use S3 to store artifact.
